@@ -128,7 +128,7 @@ resource "rke_cluster" "cluster" {
 }
 resource "local_file" "kube_cluster_yaml" {
   filename = "${path.root}/kube_config_cluster.yml"
-  sensitive_content  = "${rke_cluster.cluster.kube_config_yaml}"
+  sensitive_content  = rke_cluster.cluster.kube_config_yaml
 }
 
 #output "aws_ami" { value = data.aws_ami.default.arn}
