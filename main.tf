@@ -17,27 +17,65 @@ provider "rke" {
 #####################################
 
 resource "aws_vpc" "vpc" {
-  cidr_block = "10.0.0.0/16"
+  cidr_block           = "10.0.0.0/16"
   enable_dns_hostnames = true
-  enable_dns_support = true
+  enable_dns_support   = true
 }
 
 resource "aws_subnet" "subnet-a" {
   vpc_id            = aws_vpc.vpc.id
-  cidr_block = "${cidrsubnet(aws_vpc.vpc.cidr_block, 3, 1)}"
+  cidr_block        = cidrsubnet(aws_vpc.vpc.cidr_block, 3, 1)
   availability_zone = "us-west-2a"
+}
+
+locals {
+  ingress_rules = [
+    {
+      description = "SSH",
+      port        = 22,
+    },
+    {
+      description = "docker TLS",
+      port        = 2376,
+    },
+    {
+      description = "KubeAPI port on Control Plane",
+      port        = 6443,
+    },
+    {
+      description = "etcd",
+      port        = 2379,
+    },
+    {
+      description = "Kubelet API",
+      port        = 10250,
+    },
+    {
+      description = "kube-scheduler",
+      port        = 10251,
+    },
+    {
+      description = "kube-controller-manager",
+      port        = 10252,
+    },
+    {
+      description = "Read-Only Kubelet API",
+      port        = 10255,
+    },
+  ]
 }
 
 resource "aws_security_group" "security-group" {
   vpc_id = aws_vpc.vpc.id
-
-  ingress {
-    description = "SSH from anywhere"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    //    cidr_blocks = ["0.0.0.0/0", data.aws_vpc.docker-vpc.cidr_block]
-    cidr_blocks = ["0.0.0.0/0"]
+  dynamic "ingress" {
+    for_each = local.ingress_rules
+    content {
+      description = "${ingress.value.description} from anywhere"
+      from_port   = ingress.value.port
+      to_port     = ingress.value.port
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
   }
 
   ingress {
@@ -48,21 +86,6 @@ resource "aws_security_group" "security-group" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  ingress {
-    description = "docker TLS from anywhere"
-    from_port   = 2376
-    to_port     = 2376
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "KubeAPI port [6443] on Control Plane from anywhere"
-    from_port   = 6443
-    to_port     = 6443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
   egress {
     from_port   = 0
     to_port     = 0
@@ -103,19 +126,19 @@ resource "aws_internet_gateway" "gw" {
   vpc_id = aws_vpc.vpc.id
 
   tags = {
-      Name = "k8s-gw"
-    }
+    Name = "k8s-gw"
+  }
 }
 
 resource "aws_route_table" "route" {
   vpc_id = aws_vpc.vpc.id
   route {
-      cidr_block = "0.0.0.0/0"
-      gateway_id = aws_internet_gateway.gw.id
-    }
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.gw.id
+  }
   tags = {
-      Name = "k8s-route-table"
-    }
+    Name = "k8s-route-table"
+  }
 }
 resource "aws_route_table_association" "subnet-association" {
   subnet_id      = aws_subnet.subnet-a.id
@@ -131,56 +154,63 @@ resource "aws_instance" "instance" {
   tags = {
     Name = "k8s"
   }
-  iam_instance_profile = aws_iam_instance_profile.k8s_profile.name
+  iam_instance_profile        = aws_iam_instance_profile.k8s_profile.name
   instance_type               = "t2.micro"
   ami                         = data.aws_ami.default.id
   key_name                    = "ec2-user-key"
   associate_public_ip_address = true
   ipv6_address_count          = 0
-  vpc_security_group_ids = [aws_security_group.security-group.id]
-  subnet_id = aws_subnet.subnet-a.id
-#  user_data_base64 = data.template_cloudinit_config.init.rendered
+  vpc_security_group_ids      = [aws_security_group.security-group.id]
+  subnet_id                   = aws_subnet.subnet-a.id
+  #  user_data_base64 = data.template_cloudinit_config.init.rendered
   user_data = data.template_file.init.template
-
-/*  connection {
-    user = "ec2-user"
-    host = self.public_ip
-     private_key = file("/Users/mrodkin/.ssh/id_rsa")
-    agent       = "false"
+  root_block_device {
+    volume_size = 20
   }
-
-  provisioner "file" {
-    source      = "/Users/mrodkin/.ssh/id_rsa"
-    destination = "~/.ssh/id_rsa"
-  }*/
-
-//  provisioner "remote-exec" {
-//    inline = [
-//      "cloud-init analyze show -i /var/log/cloud-init.log",
-//    ]
-//  }
-
+  connection {
+    user        = "ec2-user"
+    host        = self.public_ip
+    private_key = file("/Users/mrodkin/.ssh/id_rsa")
+    #agent       = "false"
+    timeout = "60s"
+  }
+  #https://github.com/hashicorp/terraform/issues/4668#issuecomment-419575242
+  provisioner "remote-exec" {
+    inline = [
+      "sudo cloud-init status --wait",
+      "sleep 60"
+    ]
+  }
 }
+
+
 resource "rke_cluster" "cluster" {
-  depends_on = [aws_instance.instance, aws_eip.ip]
+  depends_on            = [aws_instance.instance, aws_eip.ip]
   ignore_docker_version = true
   nodes {
 
-#    address = module.ec2-instance.public_dns
+    #    address = module.ec2-instance.public_dns
     address = aws_eip.ip.public_dns
     user    = "ec2-user"
     role    = ["controlplane", "worker", "etcd"]
     ssh_key = file("~/.ssh/id_rsa")
-#    ssh_key_path = "~/.ssh/id_rsa"
+    #    ssh_key_path = "~/.ssh/id_rsa"
   }
   addons_include = [
-    "https://raw.githubusercontent.com/kubernetes/dashboard/v1.10.1/src/deploy/recommended/kubernetes-dashboard.yaml",
+    #https://stackoverflow.com/questions/58903682/kubernetes-dashboard-the-server-could-not-find-the-requested-resource
+    #Check if the proxy is started: kubectl proxy
+    #Update the version DashBoard: from v1.10.0 to v2.0.0-beta4
+    #Check if the NodePort is in the same dashboard's namespace
+    #https://github.com/kubernetes/dashboard/releases/tag/v2.2.0
+    #and use this url to reach the dashboard:
+    #http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/#/namespace?namespace=default
+    "https://raw.githubusercontent.com/kubernetes/dashboard/v2.2.0/aio/deploy/recommended.yaml",
     "https://gist.githubusercontent.com/superseb/499f2caa2637c404af41cfb7e5f4a938/raw/930841ac00653fdff8beca61dab9a20bb8983782/k8s-dashboard-user.yml",
   ]
 }
 resource "local_file" "kube_cluster_yaml" {
-  filename = "${path.root}/kube_config_cluster.yml"
-  sensitive_content  = rke_cluster.cluster.kube_config_yaml
+  filename          = "${path.root}/kube_config_cluster.yml"
+  sensitive_content = rke_cluster.cluster.kube_config_yaml
 }
 
 #output "aws_ami" { value = data.aws_ami.default.arn}
