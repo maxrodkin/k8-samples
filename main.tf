@@ -155,7 +155,7 @@ resource "aws_instance" "instance" {
     Name = "k8s"
   }
   iam_instance_profile        = aws_iam_instance_profile.k8s_profile.name
-  instance_type               = "t2.micro"
+  instance_type               = "t2.small"
   ami                         = data.aws_ami.default.id
   key_name                    = "ec2-user-key"
   associate_public_ip_address = true
@@ -213,8 +213,44 @@ resource "local_file" "kube_cluster_yaml" {
   sensitive_content = rke_cluster.cluster.kube_config_yaml
 }
 
+resource "null_resource" "poll" {
+  depends_on = [local_file.kube_cluster_yaml]
+
+  provisioner "local-exec" {
+    command = "ls ${path.root}/kube_config_cluster.yml"
+  }
+}
+
+provider "kubernetes" {
+  config_path    = "${path.root}/kube_config_cluster.yml"
+  config_context = "local"
+}
+
+resource "kubernetes_pod" "test" {
+  depends_on = [
+  null_resource.poll]
+  metadata {
+    name = "terraform-example"
+  }
+
+  spec {
+    container {
+      image = "nginx:1.7.9"
+      name  = "example"
+      env {
+        name  = "environment"
+        value = "test"
+      }
+      port {
+        container_port = 8080
+      }
+    }
+  }
+}
+
 #output "aws_ami" { value = data.aws_ami.default.arn}
 #output "public_ip" {value = module.ec2-instance.public_ip}
 #output "public_ip" { value = aws_instance.instance.public_ip }
 output "eip_public_ip" { value = aws_eip.ip.public_ip }
 output "eip_public_dns" { value = aws_eip.ip.public_dns }
+output "ekubernetes_pod_test_metadata" { value = kubernetes_pod.test.metadata }
