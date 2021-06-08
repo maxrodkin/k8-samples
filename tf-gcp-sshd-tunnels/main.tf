@@ -23,8 +23,9 @@ variable "project_name" {
 
 ################## RESOURCE ############################
 resource "google_compute_firewall" "default" {
-  name    = var.project_name
-  network = data.google_compute_network.default.name
+  name       = var.project_name
+#  network    = data.google_compute_network.default.name
+  network    = "gcp-ushi-east4-dgtl-npe-vpc"
   depends_on = [data.google_compute_network.default]
   allow {
     protocol = "icmp"
@@ -41,5 +42,7 @@ resource "google_compute_firewall" "default" {
 
 
 ################## OUTPUT ############################3
-
+output "google_compute_network-default-name" {
+  value = data.google_compute_network.default.name
+}
 
