@@ -1,11 +1,9 @@
 ################## PROVIDERS ############################3
 
 provider "kubernetes" {
-  #host  = "https://${data.google_container_cluster.mycluster.endpoint}"
   host  = "https://${google_container_cluster.mycluster.endpoint}"
   token = data.google_client_config.provider.access_token
   cluster_ca_certificate = base64decode(
-    #data.google_container_cluster.mycluster.master_auth[0].cluster_ca_certificate,
     google_container_cluster.mycluster.master_auth[0].cluster_ca_certificate,
   )
 }
@@ -53,13 +51,6 @@ resource "kubernetes_deployment" "sshd" {
         container {
           image = "panubo/sshd"
           name  = "sshd"
-
-          //          resources {
-          //            requests = {
-          //              cpu    = "250m"
-          //              memory = "250Mi"
-          //            }
-          //          }
           port {
             container_port = 22
             host_port      = 2222
